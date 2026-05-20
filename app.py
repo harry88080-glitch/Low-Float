@@ -15,7 +15,7 @@ Complete rewrite fixing all critical issues:
 7. Sound alerts with on/off toggle that works in background
 """
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, jsonify, request
 import requests
 import time
 import datetime
@@ -25,7 +25,7 @@ import re
 import os
 from bs4 import BeautifulSoup
 
-app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__ ), 'templates'))
+app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("app")
 
@@ -860,7 +860,11 @@ def scan_loop():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    import pathlib
+    html_file = pathlib.Path(__file__).parent / "templates" / "index.html"
+    if html_file.exists():
+        return html_file.read_text()
+    return "App loading...", 200
 
 @app.route("/api/alerts")
 def api_alerts():
