@@ -1,16 +1,6 @@
-"""
-ProFloat Scanner v3 - Single File Version
-All HTML embedded directly in Python - no templates folder needed
-"""
-
-from flask import Flask, jsonify, request, Response
+from flask import Flask, Response, jsonify, request
 import requests as req
-import time
-import datetime
-import threading
-import logging
-import re
-import os
+import time, datetime, threading, logging, re, os
 from bs4 import BeautifulSoup
 
 app = Flask(__name__)
@@ -20,7 +10,6 @@ log = logging.getLogger("app")
 PUSHOVER_USER  = os.environ.get("PUSHOVER_USER",  "YOUR_PUSHOVER_USER_TOKEN")
 PUSHOVER_TOKEN = os.environ.get("PUSHOVER_TOKEN", "YOUR_PUSHOVER_APP_TOKEN")
 PUSHOVER_URL   = "https://api.pushover.net/1/messages.json"
-
 MIN_SCORE  = int(os.environ.get("MIN_SCORE",   "5"))
 MIN_GAP    = float(os.environ.get("MIN_GAP",   "10.0"))
 MAX_FLOAT  = float(os.environ.get("MAX_FLOAT", "10.0"))
@@ -43,31 +32,17 @@ FEED_LIST = [
     ["Yahoo Finance",         "https://finance.yahoo.com/news/rssindex"],
 ]
 
-SKIP = [
-    "INC","LLC","CORP","LTD","THE","AND","FOR","SEC","ACT","NEW","COM","NET",
-    "US","USA","FDA","CEO","CFO","COO","IPO","ETF","NYSE","NASDAQ","AM","PM",
-    "EST","ET","AI","EV","UK","EU","UN","WHO","DOD","DOE","NASA","M","B","Q",
-    "A","AN","IN","OF","TO","BY","ON","AS","AT","HIGH","LOW","TOP","HOT","KEY",
-    "EPS","NDA","BLA","CRL","RX","PR","TV","FM","RP","PO","SA","AG",
-]
+SKIP = ["INC","LLC","CORP","LTD","THE","AND","FOR","SEC","ACT","NEW","COM","NET","US","USA","FDA","CEO","CFO","COO","IPO","ETF","NYSE","NASDAQ","AM","PM","EST","ET","AI","EV","UK","EU","UN","WHO","DOD","DOE","NASA","M","B","Q","A","AN","IN","OF","TO","BY","ON","AS","AT","HIGH","LOW","TOP","HOT","KEY","EPS","NDA","BLA","CRL","RX","PR","TV","FM","RP","PO","SA","AG"]
 
-state = {
-    "alerts": [], "news": [], "watchlist": [],
-    "seen": [], "alerted": [], "feeds_status": {},
-    "scanning": False, "last_scan": None,
-    "scan_count": 0, "session": "closed",
-}
+state = {"alerts":[],"news":[],"watchlist":[],"seen":[],"alerted":[],"feeds_status":{},"scanning":False,"last_scan":None,"scan_count":0,"session":"closed"}
 
 def get_session():
     now = datetime.datetime.utcnow()
     h = (now.hour - 4) % 24
     m = now.minute
-    if h >= 4 and (h < 9 or (h == 9 and m < 30)):
-        return "premarket", h, m
-    if (h == 9 and m >= 30) or (10 <= h < 16):
-        return "regular", h, m
-    if 16 <= h < 20:
-        return "afterhours", h, m
+    if h >= 4 and (h < 9 or (h == 9 and m < 30)): return "premarket", h, m
+    if (h == 9 and m >= 30) or (10 <= h < 16): return "regular", h, m
+    if 16 <= h < 20: return "afterhours", h, m
     return "closed", h, m
 
 def is_scanning():
@@ -76,12 +51,11 @@ def is_scanning():
 
 def sess_label():
     s, h, m = get_session()
-    return {"premarket":"PRE MARKET","regular":"MARKET OPEN","afterhours":"AFTER HOURS","closed":"MARKET CLOSED"}.get(s,"UNKNOWN")
+    return {"premarket":"PRE MARKET","regular":"MARKET OPEN","afterhours":"AFTER HOURS","closed":"MARKET CLOSED"}.get(s, "UNKNOWN")
 
-def has(text, words):
+def has(t, words):
     for w in words:
-        if w in text:
-            return True
+        if w in t: return True
     return False
 
 def score_text(text):
@@ -92,15 +66,13 @@ def score_text(text):
         score = 3 if has(t,["reject","refus","crl","clinical hold"]) else 10
         name = "FDA Approval"
     if score < 8 and has(t,["phase","trial","endpoint","readout","topline"]) and has(t,["positive","success","met","significant","strong","favorable"]):
-        if not has(t,["failed","miss","negative","halt"]):
-            score = 8; name = "Clinical Trial Win"
+        if not has(t,["failed","miss","negative","halt"]): score = 8; name = "Clinical Trial Win"
     if score < 9 and has(t,["acqui","merger","takeover","buyout","definitive agreement","tender offer","going private"]):
         score = 9; name = "Merger Acquisition"
     if score < 8 and has(t,["contract","award","awarded","selected","procurement"]) and has(t,["pentagon","military","army","navy","air force","department of defense","government","federal","nasa","darpa"]):
         score = 8; name = "Government Contract"
     if score < 7 and has(t,["earnings","eps","revenue","quarterly","q1","q2","q3","q4"]) and has(t,["beat","exceed","surpass","above","better than expected","record","topped"]):
-        if not has(t,["miss","below","disappoint"]):
-            score = 7; name = "Earnings Beat"
+        if not has(t,["miss","below","disappoint"]): score = 7; name = "Earnings Beat"
     if score < 7 and has(t,["short squeeze","short interest","heavily shorted","most shorted","gamma squeeze","unusual options"]):
         score = 7; name = "Short Squeeze"
     if score < 7 and has(t,["defense","defence","weapon","missile","drone","ammunition","warfare"]) and has(t,["war","conflict","escalat","nato","sanction","surge","spending"]):
@@ -108,77 +80,55 @@ def score_text(text):
     if score < 6 and has(t,["oil","natural gas","crude","lithium","uranium","opec","lng"]) and has(t,["surge","spike","soar","war","conflict","sanction","shortage"]):
         score = 6; name = "Energy Surge"
     if score < 6 and has(t,["licensing","collaboration","joint venture","exclusive agreement","distribution agreement"]):
-        if not has(t,["terminat","cancel","dissolv"]):
-            score = 6; name = "Partnership Deal"
-    if score == 0:
-        return 0, "General News"
-    if has(t,["billion","landmark","historic","first ever","pivotal"]):
-        score = min(10, score + 1)
-    if has(t,["bankrupt","chapter 11","going concern","delist","lawsuit"]):
-        score = max(1, score - 2)
+        if not has(t,["terminat","cancel","dissolv"]): score = 6; name = "Partnership Deal"
+    if score == 0: return 0, "General News"
+    if has(t,["billion","landmark","historic","first ever","pivotal"]): score = min(10, score + 1)
+    if has(t,["bankrupt","chapter 11","going concern","delist","lawsuit"]): score = max(1, score - 2)
     return score, name
 
 def get_tickers(text):
     found = []
-    for m in re.findall(r'\$([A-Z]{1,5})\b', text):
-        found.append(m)
+    for m in re.findall(r'\$([A-Z]{1,5})\b', text): found.append(m)
     for m in re.findall(r'\(([A-Z]{1,5})\)', text):
-        if len(m) >= 2:
-            found.append(m)
-    for m in re.findall(r'(?:NYSE|NASDAQ|Nasdaq)[\s:]+([A-Z]{1,5})\b', text):
-        found.append(m)
-    seen = []
-    out = []
+        if len(m) >= 2: found.append(m)
+    for m in re.findall(r'(?:NYSE|NASDAQ|Nasdaq)[\s:]+([A-Z]{1,5})\b', text): found.append(m)
+    seen = []; out = []
     for t in found:
-        if t not in SKIP and t not in seen and len(t) >= 2:
-            seen.append(t)
-            out.append(t)
+        if t not in SKIP and t not in seen and len(t) >= 2: seen.append(t); out.append(t)
     return out
 
 def search_yahoo(company):
-    if not company or len(company) < 5:
-        return []
+    if not company or len(company) < 5: return []
     try:
         url = "https://query1.finance.yahoo.com/v1/finance/search?q=" + req.utils.quote(company) + "&quotesCount=3&newsCount=0"
         r = req.get(url, headers={"User-Agent": BROWSER}, timeout=8)
-        if r.status_code != 200:
-            return []
+        if r.status_code != 200: return []
         results = r.json().get("quotes", [])
         tickers = []
         for res in results[:3]:
-            sym = res.get("symbol","")
-            qt = res.get("quoteType","")
-            ex = res.get("exchange","")
+            sym = res.get("symbol",""); qt = res.get("quoteType",""); ex = res.get("exchange","")
             if qt == "EQUITY" and len(sym) <= 5 and "." not in sym:
-                if ex in ["NMS","NYQ","NGM","NCM","ASE","PCX","BTS","OTC"]:
-                    tickers.append(sym)
+                if ex in ["NMS","NYQ","NGM","NCM","ASE","PCX","BTS","OTC"]: tickers.append(sym)
         return tickers
-    except Exception:
-        return []
+    except Exception: return []
 
 def extract_company(headline):
-    patterns = [
-        r'^([A-Z][a-zA-Z\s&]+(?:Inc|Corp|Ltd|LLC|Co|Therapeutics|Pharma|Bio|Tech|Sciences|Holdings|Group|Medical|Health)\.?)',
-        r'([A-Z][a-zA-Z\s&]+(?:Inc|Corp|Ltd|LLC|Co|Therapeutics|Pharma|Bio|Tech|Sciences|Holdings|Group|Medical|Health)\.?)\s+(?:announces|reports|receives|granted|awarded)',
-    ]
+    patterns = [r'^([A-Z][a-zA-Z\s&]+(?:Inc|Corp|Ltd|LLC|Co|Therapeutics|Pharma|Bio|Tech|Sciences|Holdings|Group|Medical|Health)\.?)',r'([A-Z][a-zA-Z\s&]+(?:Inc|Corp|Ltd|LLC|Co|Therapeutics|Pharma|Bio|Tech|Sciences|Holdings|Group|Medical|Health)\.?)\s+(?:announces|reports|receives|granted|awarded)']
     for p in patterns:
         match = re.search(p, headline)
         if match:
             name = match.group(1).strip()
-            if 5 <= len(name) <= 60:
-                return name
+            if 5 <= len(name) <= 60: return name
     return ""
 
 def find_tickers(headline, summary):
     full = headline + " " + summary
     tickers = get_tickers(full)
-    if tickers:
-        return tickers
+    if tickers: return tickers
     company = extract_company(headline)
     if company:
         yahoo = search_yahoo(company)
-        if yahoo:
-            return yahoo
+        if yahoo: return yahoo
     return []
 
 def get_price(ticker):
@@ -187,8 +137,7 @@ def get_price(ticker):
     try:
         url = "https://query1.finance.yahoo.com/v8/finance/chart/" + ticker + "?interval=1d&range=5d&includePrePost=true"
         r = req.get(url, headers=hdrs, timeout=10)
-        if r.status_code != 200:
-            return None
+        if r.status_code != 200: return None
         meta = r.json()["chart"]["result"][0]["meta"]
         price = meta.get("regularMarketPrice", 0)
         prev  = meta.get("chartPreviousClose", 0)
@@ -196,28 +145,21 @@ def get_price(ticker):
         avg   = meta.get("averageDailyVolume10Day", vol) or vol
         if sess == "premarket":
             pre = meta.get("preMarketPrice") or price
-            if pre:
-                price = pre
+            if pre: price = pre
         elif sess == "afterhours":
             post = meta.get("postMarketPrice") or price
-            if post:
-                price = post
+            if post: price = post
         gap = ((price - prev) / prev * 100.0) if prev else 0.0
-    except Exception:
-        return None
+    except Exception: return None
     fm = 99.0
     try:
         u2 = "https://query1.finance.yahoo.com/v11/finance/quoteSummary/" + ticker + "?modules=defaultKeyStatistics"
         r2 = req.get(u2, headers=hdrs, timeout=8)
         if r2.status_code == 200:
             raw = r2.json()["quoteSummary"]["result"][0]["defaultKeyStatistics"].get("floatShares",{}).get("raw",None)
-            if raw:
-                fm = raw / 1000000.0
-    except Exception:
-        pass
-    vol_spike = False
-    vol_spike_ratio = 0.0
-    making_highs = False
+            if raw: fm = raw / 1000000.0
+    except Exception: pass
+    vol_spike = False; vol_spike_ratio = 0.0; making_highs = False
     try:
         u3 = "https://query1.finance.yahoo.com/v8/finance/chart/" + ticker + "?interval=5m&range=1d&includePrePost=true"
         r3 = req.get(u3, headers=hdrs, timeout=10)
@@ -226,41 +168,30 @@ def get_price(ticker):
             if res3:
                 q3 = res3[0].get("indicators",{}).get("quote",[{}])[0]
                 vols  = [v for v in q3.get("volume",[]) if v is not None and v > 0]
-                highs = [h for h in q3.get("high",[])   if h is not None and h > 0]
+                highs = [x for x in q3.get("high",[])   if x is not None and x > 0]
                 if len(vols) >= 6:
-                    recent_avg = sum(vols[-3:]) / 3
-                    hist_avg   = sum(vols[:-3]) / max(len(vols)-3, 1)
-                    if hist_avg > 0:
-                        vol_spike_ratio = recent_avg / hist_avg
-                        vol_spike = vol_spike_ratio >= 3.0
+                    ra = sum(vols[-3:]) / 3; ha = sum(vols[:-3]) / max(len(vols)-3, 1)
+                    if ha > 0: vol_spike_ratio = ra / ha; vol_spike = vol_spike_ratio >= 3.0
                 if len(highs) >= 6:
-                    recent_high = max(highs[-3:])
-                    earlier_high = max(highs[-9:-3]) if len(highs) >= 9 else max(highs[:-3])
-                    making_highs = recent_high >= earlier_high * 0.99
-    except Exception:
-        pass
+                    rh = max(highs[-3:]); eh = max(highs[-9:-3]) if len(highs) >= 9 else max(highs[:-3])
+                    making_highs = rh >= eh * 0.99
+    except Exception: pass
     rvol = vol / avg if avg > 0 else 0
-    return {
-        "price": price, "gap": gap, "vol": int(vol), "avg": int(avg),
-        "float_m": fm, "rvol": rvol,
-        "vol_spike": vol_spike, "vol_spike_ratio": round(vol_spike_ratio,1),
-        "making_highs": making_highs, "session": sess,
-    }
+    return {"price":price,"gap":gap,"vol":int(vol),"avg":int(avg),"float_m":fm,"rvol":rvol,"vol_spike":vol_spike,"vol_spike_ratio":round(vol_spike_ratio,1),"making_highs":making_highs,"session":sess}
 
 def vol_str(v):
     if v >= 1000000: return str(round(v/1000000.0,1)) + "M"
-    if v >= 1000:    return str(int(v/1000)) + "K"
+    if v >= 1000: return str(int(v/1000)) + "K"
     return str(v)
 
 def compute_grade(score, gap, fm, rvol, vol_spike, making_highs):
-    pts = 0
-    reasons = []
-    if score >= 7:    pts += 1; reasons.append("Score " + str(score) + "/10")
-    if gap >= 20:     pts += 1; reasons.append("Gap +" + str(round(gap,1)) + "%")
-    if fm <= 5:       pts += 1; reasons.append("Float " + str(round(fm,1)) + "M")
-    if rvol >= 5:     pts += 1; reasons.append("RVOL " + str(round(rvol,1)) + "x")
-    if vol_spike:     pts += 1; reasons.append("Vol spike now")
-    if making_highs:  pts += 1; reasons.append("New highs")
+    pts = 0; reasons = []
+    if score >= 7:   pts += 1; reasons.append("Score " + str(score) + "/10")
+    if gap >= 20:    pts += 1; reasons.append("Gap +" + str(round(gap,1)) + "%")
+    if fm <= 5:      pts += 1; reasons.append("Float " + str(round(fm,1)) + "M")
+    if rvol >= 5:    pts += 1; reasons.append("RVOL " + str(round(rvol,1)) + "x")
+    if vol_spike:    pts += 1; reasons.append("Vol spike now")
+    if making_highs: pts += 1; reasons.append("New highs")
     if pts >= 6: return "A+", reasons
     if pts >= 5: return "A",  reasons
     if pts >= 4: return "B",  reasons
@@ -268,84 +199,56 @@ def compute_grade(score, gap, fm, rvol, vol_spike, making_highs):
     return "D", reasons
 
 def send_push(alert):
-    if PUSHOVER_USER.startswith("YOUR_"):
-        return
-    g = alert["grade"]
-    sess = alert.get("session","regular")
-    pri  = 1 if g in ["A+","A"] else 0 if g == "B" else -1
-    snd  = "siren" if g in ["A+","A"] else "bugle" if g == "B" else "pushover"
-    pre  = {"premarket":"[PRE] ","afterhours":"[AH] ","regular":""}.get(sess,"")
+    if PUSHOVER_USER.startswith("YOUR_"): return
+    g = alert["grade"]; sess = alert.get("session","regular")
+    pri = 1 if g in ["A+","A"] else 0 if g == "B" else -1
+    snd = "siren" if g in ["A+","A"] else "bugle" if g == "B" else "pushover"
+    pre = {"premarket":"[PRE] ","afterhours":"[AH] ","regular":""}.get(sess,"")
     title = pre + alert["ticker"] + " Grade " + g + " +" + str(round(alert["gap"])) + "% " + alert["cat"]
-    body  = (alert["cat"] + "\n\n" + alert["headline"][:140] + "\n\n" +
-             "$" + str(alert["price"]) + " Gap +" + str(alert["gap"]) + "%" +
-             "\nVol " + alert["vol_str"] + " Float " + str(alert["fm"]) + "M" +
-             "\nRVOL " + str(alert["rvol"]) + "x Score " + str(alert["score"]) + "/10" +
-             "\nSpike: " + str(alert["vol_spike"]) + " Highs: " + str(alert["making_highs"]) +
-             "\n" + alert["time"])
-    data = {
-        "token": PUSHOVER_TOKEN, "user": PUSHOVER_USER,
-        "title": title, "message": body,
-        "priority": pri, "sound": snd,
-        "url": alert.get("url",""), "url_title": "Read article",
-    }
+    body = (alert["cat"] + "\n\n" + alert["headline"][:140] + "\n\n" + "$" + str(alert["price"]) + " Gap +" + str(alert["gap"]) + "%" + "\nVol " + alert["vol_str"] + " Float " + str(alert["fm"]) + "M" + "\nRVOL " + str(alert["rvol"]) + "x Score " + str(alert["score"]) + "/10" + "\nSpike: " + str(alert["vol_spike"]) + " Highs: " + str(alert["making_highs"]) + "\n" + alert["time"])
+    data = {"token":PUSHOVER_TOKEN,"user":PUSHOVER_USER,"title":title,"message":body,"priority":pri,"sound":snd,"url":alert.get("url",""),"url_title":"Read article"}
     try:
         r = req.post(PUSHOVER_URL, data=data, timeout=10)
-        if r.json().get("status") == 1:
-            log.info("Push sent " + alert["ticker"] + " Grade " + g)
-    except Exception as e:
-        log.warning("Push failed: " + str(e))
+        if r.json().get("status") == 1: log.info("Push sent " + alert["ticker"] + " Grade " + g)
+    except Exception as e: log.warning("Push failed: " + str(e))
 
 def get_feed(name, url):
     hdrs = {"User-Agent": BROWSER, "Accept": "text/html,*/*"}
     try:
         r = req.get(url, headers=hdrs, timeout=15)
-        if r.status_code >= 400:
-            state["feeds_status"][name] = "HTTP " + str(r.status_code)
-            return []
-    except Exception as e:
-        state["feeds_status"][name] = "Error"
-        return []
+        if r.status_code >= 400: state["feeds_status"][name] = "HTTP " + str(r.status_code); return []
+    except Exception: state["feeds_status"][name] = "Error"; return []
     out = []
     try:
         soup = BeautifulSoup(r.content, "html.parser")
         for entry in soup.find_all(["item","entry"]):
             tt = entry.find("title")
-            if not tt:
-                continue
+            if not tt: continue
             title = tt.get_text(separator=" ", strip=True)
             link = ""
             lt = entry.find("link")
-            if lt:
-                link = lt.get("href","") or lt.get_text(strip=True)
+            if lt: link = lt.get("href","") or lt.get_text(strip=True)
             if not link:
                 gt = entry.find("guid")
-                if gt:
-                    link = gt.get_text(strip=True)
+                if gt: link = gt.get_text(strip=True)
             summary = ""
             for sn in ["description","summary","content","encoded"]:
                 st = entry.find(sn)
-                if st:
-                    summary = st.get_text(separator=" ", strip=True)[:500]
-                    break
-            if title:
-                out.append({"title":title,"link":link.strip(),"summary":summary,"source":name})
+                if st: summary = st.get_text(separator=" ", strip=True)[:500]; break
+            if title: out.append({"title":title,"link":link.strip(),"summary":summary,"source":name})
         state["feeds_status"][name] = str(len(out)) + " items"
-    except Exception as e:
-        state["feeds_status"][name] = "Parse error"
+    except Exception: state["feeds_status"][name] = "Parse error"
     return out
 
 def check_seen(key):
-    if key in state["seen"]:
-        return True
+    if key in state["seen"]: return True
     state["seen"].append(key)
-    if len(state["seen"]) > 3000:
-        state["seen"].pop(0)
+    if len(state["seen"]) > 3000: state["seen"].pop(0)
     return False
 
 def check_alerted(ticker):
     key = ticker + "_" + str(datetime.date.today())
-    if key in state["alerted"]:
-        return True
+    if key in state["alerted"]: return True
     state["alerted"].append(key)
     return False
 
@@ -354,134 +257,72 @@ def handle_item(item):
     link     = item.get("link","").strip()
     summary  = item.get("summary","").strip()
     source   = item.get("source","")
-    if not headline:
-        return
+    if not headline: return
     news_key = link or headline
     if news_key not in [n.get("key","") for n in state["news"]]:
         score, cat = score_text(headline + " " + summary)
         tickers = get_tickers(headline + " " + summary)
-        state["news"].insert(0,{
-            "key":news_key,"title":headline,"link":link,
-            "source":source,"score":score,"cat":cat,
-            "tickers":tickers,"time":datetime.datetime.now().strftime("%H:%M ET"),
-        })
-        if len(state["news"]) > 500:
-            state["news"] = state["news"][:500]
-    if check_seen(link or headline):
-        return
+        state["news"].insert(0,{"key":news_key,"title":headline,"link":link,"source":source,"score":score,"cat":cat,"tickers":tickers,"time":datetime.datetime.now().strftime("%H:%M ET")})
+        if len(state["news"]) > 500: state["news"] = state["news"][:500]
+    if check_seen(link or headline): return
     score, cat = score_text(headline + " " + summary)
-    if score < MIN_SCORE:
-        return
+    if score < MIN_SCORE: return
     tickers = find_tickers(headline, summary)
-    if not tickers:
-        return
+    if not tickers: return
     log.info("  " + str(score) + "/10 [" + cat + "] " + headline[:55])
     for ticker in tickers[:3]:
         try:
             q = get_price(ticker)
-            if not q:
-                continue
-            price = q["price"]
-            gap   = q["gap"]
-            vol   = q["vol"]
-            avg   = q["avg"]
-            fm    = q["float_m"]
-            rvol  = q["rvol"]
-            sess  = q["session"]
-            if price < MIN_PRICE or price > MAX_PRICE:
-                continue
-            if fm > MAX_FLOAT:
-                continue
-            if gap < MIN_GAP:
-                continue
-            if vol < MIN_VOLUME:
-                continue
-            if rvol < MIN_RVOL and not q["vol_spike"]:
-                continue
+            if not q: continue
+            price = q["price"]; gap = q["gap"]; vol = q["vol"]; avg = q["avg"]; fm = q["float_m"]; rvol = q["rvol"]; sess = q["session"]
+            if price < MIN_PRICE or price > MAX_PRICE: continue
+            if fm > MAX_FLOAT: continue
+            if gap < MIN_GAP: continue
+            if vol < MIN_VOLUME: continue
+            if rvol < MIN_RVOL and not q["vol_spike"]: continue
             grade, reasons = compute_grade(score, gap, fm, rvol, q["vol_spike"], q["making_highs"])
-            if grade == "D":
-                continue
-            if check_alerted(ticker):
-                continue
-            alert = {
-                "id":       len(state["alerts"]) + 1,
-                "ticker":   ticker,
-                "headline": headline,
-                "cat":      cat,
-                "score":    score,
-                "url":      link,
-                "source":   source,
-                "session":  sess,
-                "time":     datetime.datetime.now().strftime("%H:%M:%S ET"),
-                "date":     datetime.date.today().strftime("%b %d %Y"),
-                "price":    round(price,2),
-                "gap":      round(gap,1),
-                "vol":      vol,
-                "vol_str":  vol_str(vol),
-                "fm":       round(fm,1),
-                "rvol":     round(rvol,1),
-                "vol_spike":        q["vol_spike"],
-                "vol_spike_ratio":  q["vol_spike_ratio"],
-                "making_highs":     q["making_highs"],
-                "grade":    grade,
-                "reasons":  reasons,
-                "tv_link":  "https://www.tradingview.com/chart/?symbol=" + ticker,
-            }
+            if grade == "D": continue
+            if check_alerted(ticker): continue
+            alert = {"id":len(state["alerts"])+1,"ticker":ticker,"headline":headline,"cat":cat,"score":score,"url":link,"source":source,"session":sess,"time":datetime.datetime.now().strftime("%H:%M:%S ET"),"date":datetime.date.today().strftime("%b %d %Y"),"price":round(price,2),"gap":round(gap,1),"vol":vol,"vol_str":vol_str(vol),"fm":round(fm,1),"rvol":round(rvol,1),"vol_spike":q["vol_spike"],"vol_spike_ratio":q["vol_spike_ratio"],"making_highs":q["making_highs"],"grade":grade,"reasons":reasons,"tv_link":"https://www.tradingview.com/chart/?symbol="+ticker}
             state["alerts"].insert(0, alert)
-            if len(state["alerts"]) > 300:
-                state["alerts"] = state["alerts"][:300]
+            if len(state["alerts"]) > 300: state["alerts"] = state["alerts"][:300]
             if ticker not in [w["ticker"] for w in state["watchlist"]]:
-                state["watchlist"].insert(0,{
-                    "ticker":ticker,"added":alert["time"],
-                    "cat":cat,"grade":grade,"session":sess,
-                })
-            log.info("ALERT " + ticker + " Grade:" + grade + " Gap:" + str(round(gap,1)) + "% Spike:" + str(q["vol_spike"]) + " Highs:" + str(q["making_highs"]) + " " + cat)
+                state["watchlist"].insert(0,{"ticker":ticker,"added":alert["time"],"cat":cat,"grade":grade,"session":sess})
+            log.info("ALERT " + ticker + " Grade:" + grade + " Gap:" + str(round(gap,1)) + "% " + cat)
             send_push(alert)
-        except Exception as e:
-            log.debug("Stock check error " + ticker + ": " + str(e))
+        except Exception as e: log.debug("Error " + ticker + ": " + str(e))
 
 def scan_loop():
     while True:
         try:
             if is_scanning():
-                state["scanning"] = True
-                state["scan_count"] += 1
-                state["last_scan"] = datetime.datetime.now().strftime("%H:%M:%S")
-                sess, h, m = get_session()
-                state["session"] = sess
+                state["scanning"] = True; state["scan_count"] += 1; state["last_scan"] = datetime.datetime.now().strftime("%H:%M:%S")
+                sess, h, m = get_session(); state["session"] = sess
                 for row in FEED_LIST:
                     try:
                         items = get_feed(row[0], row[1])
-                        for item in items:
-                            handle_item(item)
-                    except Exception as e:
-                        log.error("Feed [" + row[0] + "]: " + str(e))
+                        for item in items: handle_item(item)
+                    except Exception as e: log.error("Feed [" + row[0] + "]: " + str(e))
                 state["scanning"] = False
             else:
-                state["scanning"] = False
-                state["session"] = "closed"
-        except Exception as e:
-            log.error("Scan loop: " + str(e))
-            state["scanning"] = False
+                state["scanning"] = False; state["session"] = "closed"
+        except Exception as e: log.error("Scan loop: " + str(e)); state["scanning"] = False
         time.sleep(SCAN_SECS)
 
 @app.route("/")
 def index():
-    return Response(HTML.encode("utf-8"), mimetype="text/html; charset=utf-8")
+    return Response(HTML.encode("ascii"), mimetype="text/html; charset=utf-8")
 
 @app.route("/api/alerts")
 def api_alerts():
-    sess  = request.args.get("session","all")
-    grade = request.args.get("grade","all")
-    data  = state["alerts"]
+    sess = request.args.get("session","all"); grade = request.args.get("grade","all"); data = state["alerts"]
     if sess  != "all": data = [a for a in data if a.get("session") == sess]
     if grade != "all": data = [a for a in data if a.get("grade")   == grade]
     return jsonify(data)
 
 @app.route("/api/news")
 def api_news():
-    cat  = request.args.get("cat","all")
-    data = state["news"]
+    cat = request.args.get("cat","all"); data = state["news"]
     if cat != "all": data = [n for n in data if n.get("cat") == cat]
     return jsonify(data[:100])
 
@@ -491,20 +332,16 @@ def api_watchlist():
 
 @app.route("/api/watchlist/add", methods=["POST"])
 def api_wl_add():
-    d = request.get_json()
-    t = d.get("ticker","").upper().strip()
-    if not t or len(t) > 5:
-        return jsonify({"ok":False,"error":"Invalid ticker"})
-    if t in [w["ticker"] for w in state["watchlist"]]:
-        return jsonify({"ok":False,"error":"Already in watchlist"})
+    d = request.get_json(); t = d.get("ticker","").upper().strip()
+    if not t or len(t) > 5: return jsonify({"ok":False,"error":"Invalid ticker"})
+    if t in [w["ticker"] for w in state["watchlist"]]: return jsonify({"ok":False,"error":"Already in watchlist"})
     sess, h, m = get_session()
-    state["watchlist"].insert(0,{"ticker":t,"added":datetime.datetime.now().strftime("%H:%M ET"),"cat":d.get("cat","Manual"),"grade":"—","session":sess})
+    state["watchlist"].insert(0,{"ticker":t,"added":datetime.datetime.now().strftime("%H:%M ET"),"cat":d.get("cat","Manual"),"grade":"--","session":sess})
     return jsonify({"ok":True})
 
 @app.route("/api/watchlist/remove", methods=["POST"])
 def api_wl_remove():
-    d = request.get_json()
-    t = d.get("ticker","").upper().strip()
+    d = request.get_json(); t = d.get("ticker","").upper().strip()
     state["watchlist"] = [w for w in state["watchlist"] if w["ticker"] != t]
     return jsonify({"ok":True})
 
@@ -515,56 +352,28 @@ def api_wl_refresh():
         try:
             q = get_price(w["ticker"])
             if q:
-                result.append({
-                    "ticker":w["ticker"],"price":round(q["price"],2),
-                    "gap":round(q["gap"],1),"vol":vol_str(q["vol"]),
-                    "float_m":round(q["float_m"],1),"rvol":round(q["rvol"],1),
-                    "vol_spike":q["vol_spike"],"making_highs":q["making_highs"],
-                    "cat":w.get("cat",""),"grade":w.get("grade","—"),
-                    "session":w.get("session",""),"added":w.get("added",""),
-                })
-            else:
-                result.append(w)
-        except Exception:
-            result.append(w)
+                result.append({"ticker":w["ticker"],"price":round(q["price"],2),"gap":round(q["gap"],1),"vol":vol_str(q["vol"]),"float_m":round(q["float_m"],1),"rvol":round(q["rvol"],1),"vol_spike":q["vol_spike"],"making_highs":q["making_highs"],"cat":w.get("cat",""),"grade":w.get("grade","--"),"session":w.get("session",""),"added":w.get("added","")})
+            else: result.append(w)
+        except Exception: result.append(w)
     return jsonify(result)
 
 @app.route("/api/ticker/<ticker>")
 def api_ticker(ticker):
     try:
         q = get_price(ticker.upper())
-        if not q:
-            return jsonify({"ok":False,"error":"Not found"})
+        if not q: return jsonify({"ok":False,"error":"Not found"})
         qualifies = q["float_m"] <= MAX_FLOAT and q["gap"] >= MIN_GAP and q["rvol"] >= MIN_RVOL
-        return jsonify({
-            "ok":True,"ticker":ticker.upper(),
-            "price":round(q["price"],2),"gap":round(q["gap"],1),
-            "vol":vol_str(q["vol"]),"float_m":round(q["float_m"],1),
-            "rvol":round(q["rvol"],1),"vol_spike":q["vol_spike"],
-            "vol_spike_ratio":q["vol_spike_ratio"],"making_highs":q["making_highs"],
-            "qualifies":qualifies,"session":q["session"],
-            "tv_link":"https://www.tradingview.com/chart/?symbol="+ticker.upper(),
-        })
-    except Exception as e:
-        return jsonify({"ok":False,"error":str(e)})
+        return jsonify({"ok":True,"ticker":ticker.upper(),"price":round(q["price"],2),"gap":round(q["gap"],1),"vol":vol_str(q["vol"]),"float_m":round(q["float_m"],1),"rvol":round(q["rvol"],1),"vol_spike":q["vol_spike"],"vol_spike_ratio":q["vol_spike_ratio"],"making_highs":q["making_highs"],"qualifies":qualifies,"session":q["session"],"tv_link":"https://www.tradingview.com/chart/?symbol="+ticker.upper()})
+    except Exception as e: return jsonify({"ok":False,"error":str(e)})
 
 @app.route("/api/status")
 def api_status():
     sess, h, m = get_session()
-    return jsonify({
-        "scanning":state["scanning"],"last_scan":state["last_scan"],
-        "scan_count":state["scan_count"],"alert_count":len(state["alerts"]),
-        "news_count":len(state["news"]),"wl_count":len(state["watchlist"]),
-        "feeds":state["feeds_status"],"pushover_ok":not PUSHOVER_USER.startswith("YOUR_"),
-        "session":sess,"session_label":sess_label(),"market_open":is_scanning(),
-        "et_time":str(h)+":"+str(m).zfill(2)+" ET",
-        "settings":{"MIN_SCORE":MIN_SCORE,"MIN_GAP":MIN_GAP,"MAX_FLOAT":MAX_FLOAT,"MIN_RVOL":MIN_RVOL,"SCAN_SECS":SCAN_SECS},
-    })
+    return jsonify({"scanning":state["scanning"],"last_scan":state["last_scan"],"scan_count":state["scan_count"],"alert_count":len(state["alerts"]),"news_count":len(state["news"]),"wl_count":len(state["watchlist"]),"feeds":state["feeds_status"],"pushover_ok":not PUSHOVER_USER.startswith("YOUR_"),"session":sess,"session_label":sess_label(),"market_open":is_scanning(),"settings":{"MIN_SCORE":MIN_SCORE,"MIN_GAP":MIN_GAP,"MAX_FLOAT":MAX_FLOAT,"MIN_RVOL":MIN_RVOL,"SCAN_SECS":SCAN_SECS}})
 
 @app.route("/api/alerts/clear", methods=["POST"])
 def api_clear():
-    state["alerts"] = []
-    state["alerted"] = []
+    state["alerts"] = []; state["alerted"] = []
     return jsonify({"ok":True})
 
 @app.route("/health")
@@ -573,6 +382,7 @@ def health():
 
 threading.Thread(target=scan_loop, daemon=True).start()
 log.info("ProFloat Scanner v3 started")
+
 
 HTML = """<!DOCTYPE html>
 <html lang="en">
