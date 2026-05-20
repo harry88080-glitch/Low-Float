@@ -25,7 +25,7 @@ import re
 import os
 from bs4 import BeautifulSoup
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__ ), 'templates'))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("app")
 
