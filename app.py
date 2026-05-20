@@ -860,7 +860,7 @@ def scan_loop():
 
 @app.route("/")
 def index():
-     import pathlib, os
+    import pathlib, os
     # Try multiple possible locations
     locations = [
         pathlib.Path(__file__).parent / "templates" / "index.html",
