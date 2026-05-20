@@ -860,11 +860,24 @@ def scan_loop():
 
 @app.route("/")
 def index():
-    import pathlib
-    html_file = pathlib.Path(__file__).parent / "templates" / "index.html"
-    if html_file.exists():
-        return html_file.read_text()
-    return "App loading...", 200
+    import pathlib, os
+    # Try multiple possible locations
+    locations = [
+        pathlib.Path(__file__).parent / "templates" / "index.html",
+        pathlib.Path("/opt/render/project/src/templates/index.html"),
+        pathlib.Path("templates/index.html"),
+        pathlib.Path("templates") / "index.html",
+    ]
+    for loc in locations:
+        if loc.exists():
+            return loc.read_text()
+    # Last resort — list what files exist for debugging
+    here = pathlib.Path(__file__).parent
+    files = []
+    for root, dirs, filenames in os.walk(str(here)):
+        for f in filenames:
+            files.append(os.path.join(root, f))
+    return "Files found: " + str(files), 200
 
 @app.route("/api/alerts")
 def api_alerts():
