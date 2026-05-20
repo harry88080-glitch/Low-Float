@@ -467,7 +467,7 @@ def scan_loop():
 
 @app.route("/")
 def index():
-    return Response(HTML.encode("utf-8"), mimetype="text/html; charset=utf-8")
+    return Response(HTML, mimetype="text/html")
 
 @app.route("/api/alerts")
 def api_alerts():
@@ -498,7 +498,7 @@ def api_wl_add():
     if t in [w["ticker"] for w in state["watchlist"]]:
         return jsonify({"ok":False,"error":"Already in watchlist"})
     sess, h, m = get_session()
-    state["watchlist"].insert(0,{"ticker":t,"added":datetime.datetime.now().strftime("%H:%M ET"),"cat":d.get("cat","Manual"),"grade":"—","session":sess})
+    state["watchlist"].insert(0,{"ticker":t,"added":datetime.datetime.now().strftime("%H:%M ET"),"cat":d.get("cat","Manual"),"grade":"--","session":sess})
     return jsonify({"ok":True})
 
 @app.route("/api/watchlist/remove", methods=["POST"])
@@ -520,7 +520,7 @@ def api_wl_refresh():
                     "gap":round(q["gap"],1),"vol":vol_str(q["vol"]),
                     "float_m":round(q["float_m"],1),"rvol":round(q["rvol"],1),
                     "vol_spike":q["vol_spike"],"making_highs":q["making_highs"],
-                    "cat":w.get("cat",""),"grade":w.get("grade","—"),
+                    "cat":w.get("cat",""),"grade":w.get("grade","--"),
                     "session":w.get("session",""),"added":w.get("added",""),
                 })
             else:
