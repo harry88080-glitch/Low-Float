@@ -311,7 +311,7 @@ def scan_loop():
 
 @app.route("/")
 def index():
-    return Response(HTML.encode("utf-8", errors="ignore"), mimetype="text/html; charset=utf-8")
+    return Response(HTML.encode("utf-8"), mimetype="text/html; charset=utf-8")
 
 @app.route("/api/alerts")
 def api_alerts():
@@ -742,8 +742,8 @@ function toggleSound(){
   initAudio();
   soundEnabled=!soundEnabled;
   var btn=document.getElementById('soundBtn');
-  if(soundEnabled){btn.textContent='\uD83D\uDD0A Sound ON';btn.className='sound-btn on';playTone(660,0,0.2,0.3);toast('Sound ON','ok');}
-  else{btn.textContent='\uD83D\uDD07 Sound OFF';btn.className='sound-btn off';toast('Sound OFF','');}
+  if(soundEnabled){btn.textContent='Sound ON';btn.className='sound-btn on';playTone(660,0,0.2,0.3);toast('Sound ON','ok');}
+  else{btn.textContent='Sound OFF';btn.className='sound-btn off';toast('Sound OFF','');}
 }
 function sessTag(s){
   if(s==='premarket')return '<span class="stag st-premarket">PRE</span>';
