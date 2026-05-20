@@ -467,7 +467,7 @@ def scan_loop():
 
 @app.route("/")
 def index():
-    return Response(HTML, mimetype="text/html")
+    return Response(HTML.encode("utf-8"), mimetype="text/html; charset=utf-8")
 
 @app.route("/api/alerts")
 def api_alerts():
